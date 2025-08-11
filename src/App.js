@@ -118,7 +118,6 @@ export default function App() {
   const [trail, setTrail] = useState([]);
 
   const { playBeep } = useAudio();
-  const intervalRef = useRef(null);
   const sessionStartRef = useRef(null);
 
   // 🔽 ADD THIS BLOCK
@@ -201,8 +200,8 @@ export default function App() {
     if (!isRunning) {
       setRemaining((phase === "focus" ? focusMin : breakMin) * 60);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusMin, breakMin, phase]);
+  }, [focusMin, breakMin, phase, isRunning, setRemaining]);
+
 
     // Core timer loop (ref-safe, lint-clean)
     useEffect(() => {
@@ -305,19 +304,20 @@ export default function App() {
 
   // ===== Browser tab live title =====
   useEffect(() => {
+    const original = originalTitleRef.current; // snapshot for cleanup
     const label = phase === "focus" ? "🔥" : "Break";
 
     if (isRunning) {
-      // e.g. "24:59 • Focus — FocusBlocks"
       document.title = `${fmtTime(remaining)} • ${label} Focus 🔥`;
     } else {
-      // e.g. "Paused • Focus — FocusBlocks"
       document.title = `Paused • ${label} Focus 🔥`;
     }
 
-    // Restore original title when component unmounts
-    return () => { document.title = originalTitleRef.current; };
+    return () => {
+      document.title = original;
+    };
   }, [remaining, isRunning, phase]);
+
 
 
   return (
