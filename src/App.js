@@ -189,6 +189,13 @@ export default function App() {
   };
   // 🔼 END ADD
 
+  // keep a ref to always-latest finalizePhase to avoid stale closures
+  const finalizeRef = useRef(finalizePhase);
+  useEffect(() => {
+    finalizeRef.current = finalizePhase;
+  }, [finalizePhase]);
+
+
   // Keep remaining synced to setting changes when stopped or when phase changes
   useEffect(() => {
     if (!isRunning) {
@@ -197,24 +204,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusMin, breakMin, phase]);
 
-  // Core timer loop
-  useEffect(() => {
-    if (!isRunning) return;
-    if (!sessionStartRef.current) sessionStartRef.current = Date.now();
+    // Core timer loop (ref-safe, lint-clean)
+    useEffect(() => {
+      if (!isRunning) return;
 
-    intervalRef.current = setInterval(() => {
-      setRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current);
-          finalizePhase("completed");
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(intervalRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning]);
+      if (!sessionStartRef.current) sessionStartRef.current = Date.now();
+
+      const tick = () => {
+        setRemaining((prev) => {
+          if (prev <= 1) {
+            // finalize using the latest function (no stale closure)
+            finalizeRef.current("completed");
+            return 0;
+          }
+          return prev - 1;
+        });
+      };
+
+      const id = setInterval(tick, 1000);
+      return () => clearInterval(id);
+    }, [isRunning]); // ✅ only depends on a stable ref + state flag
+
 
   // const handlePhaseComplete = () => {
   //   // finalize log for this phase
