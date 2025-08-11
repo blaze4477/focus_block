@@ -10,6 +10,28 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const pad = (n) => String(n).padStart(2, "0");
 const fmtTime = (sec) => `${pad(Math.floor(sec / 60))}:${pad(Math.floor(sec % 60))}`;
+const countWords = (s = "") => (s.trim() ? s.trim().split(/\s+/).length : 0);
+const WORD_LIMIT = 1000;
+const stripHtml = (html = "") => {
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  return el.textContent || el.innerText || "";
+};
+
+// Remove Unicode BiDi controls (RLM/LRM/RLE/LRE/RLO/LRO/PDF/FSI/LSI/RSI)
+const BIDI_REGEX = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+const stripBidi = (s = "") => s.replace(BIDI_REGEX, "");
+
+// Force LTR rendering/caret order even if BiDi chars sneak in
+const LTR_PROPS = {
+  dir: "ltr",
+  style: { direction: "ltr", unicodeBidi: "bidi-override", textAlign: "left" },
+};
+
+
+
+
 
 // ===== Spark Trail Config & Helper Functions =====
 const toRad = (deg) => (deg * Math.PI) / 180; // Convert degrees → radians
@@ -113,6 +135,10 @@ export default function App() {
   // Logs
   const [log, setLog] = useLocalStorage("fb_log", []); // {id, phase, task, start, end, duration}
 
+  const [newTodo, setNewTodo] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [showDescField, setShowDescField] = useState(false);
+
   // ===== Spark Trail State =====
   // Stores positions of recent spark dots [{x, y, t}]
   const [trail, setTrail] = useState([]);
@@ -124,11 +150,20 @@ export default function App() {
   const getTotalSec = () => (phase === "focus" ? focusMin : breakMin) * 60;
   const completingRef = useRef(false);
 
-  const addTodo = (text) => {
-  const t = text.trim();
-  if (!t) return;
-  setTodos((prev) => [{ id: String(Date.now()), text: t, done: false }, ...prev]);
+  const addTodo = (text, desc = "") => {
+    const trimmed = text.trim();
+    const description = desc.trim();
+    if (!trimmed) return;
+    if (countWords(description) > 1000) {
+      alert("Description is limited to 1000 words.");
+      return;
+    }
+    setTodos((prev) => [
+      ...prev,
+      { id: Date.now(), text: trimmed, description, done: false, open: false }
+    ]);
   };
+
 
   const toggleTodo = (id) => {
     setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
@@ -137,6 +172,17 @@ export default function App() {
   const removeTodo = (id) => {
     setTodos((prev) => prev.filter((t) => t.id !== id));
   };
+
+  const toggleOpen = (id) => {
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, open: !t.open } : t)));
+  };
+
+  const updateDescription = (id, html) => {
+    setTodos((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, description: html } : t))
+    );
+  };
+
 
   const clearCompleted = () => {
     setTodos((prev) => prev.filter((t) => !t.done));
@@ -318,6 +364,18 @@ export default function App() {
     };
   }, [remaining, isRunning, phase]);
 
+  useEffect(() => {
+    setTodos((prev) =>
+      prev.map((t) => ({
+        ...t,
+        text: stripBidi(t.text || ""),
+        description: stripBidi(t.description || ""),
+      }))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
 
   return (
@@ -437,9 +495,10 @@ export default function App() {
                   <div>
                     <label className="text-sm text-gray-600">Task for this focus window</label>
                     <input
+                      {...LTR_PROPS}
                       type="text"
                       value={currentTask}
-                      onChange={(e) => setCurrentTask(e.target.value)}
+                      onChange={(e) => setCurrentTask(stripBidi(e.target.value))}
                       placeholder="e.g. Build React component for navbar"
                       className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900"
                     />
@@ -468,56 +527,196 @@ export default function App() {
               <label className="text-sm text-gray-600">Checklist for this window</label>
 
               {/* Input + Add */}
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 space-y-2">
+                <div className="flex gap-2">
                 <input
+                  {...LTR_PROPS}
                   type="text"
+                  value={newTodo}
+                  onChange={(e) => setNewTodo(stripBidi(e.target.value))}
                   placeholder="Add a todo and press Enter"
                   className="flex-1 rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") addTodo(e.currentTarget.value);
+                    if (e.key === "Enter") {
+                      addTodo(stripBidi(newTodo), stripBidi(newDesc));
+                      setNewTodo(""); setNewDesc(""); setShowDescField(false);
+                    }
                   }}
                 />
-                <button
-                  onClick={(e) => {
-                    const input = e.currentTarget.previousSibling;
-                    addTodo(input.value);
-                    if (input && input.value) input.value = "";
-                  }}
-                  className="rounded-xl px-3 py-2 bg-gray-900 text-white text-sm"
-                >
-                  Add
-                </button>
-              </div>
 
-              {/* List */}
-              <ul className="mt-3 space-y-2">
-                {todos.length === 0 && (
-                  <li className="text-xs text-gray-500">No todos yet. Add a few small steps.</li>
+                  <button
+                    onClick={() => {
+                      addTodo(newTodo, newDesc);
+                      setNewTodo("");
+                      setNewDesc("");
+                      setShowDescField(false);
+                    }}
+                    className="rounded-xl px-3 py-2 bg-gray-900 text-white text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {!showDescField ? (
+                  <button
+                    onClick={() => setShowDescField(true)}
+                    className="text-xs text-gray-600 underline underline-offset-4"
+                  >
+                    + Add description (optional)
+                  </button>
+                ) : (
+                  <div>
+                  <textarea
+                    {...LTR_PROPS}
+                    value={newDesc}
+                    onChange={(e) => {
+                      const v = stripBidi(e.target.value);
+                      if (countWords(v) <= 1000) setNewDesc(v);
+                    }}
+                    rows={3}
+                    placeholder="Up to 1000 words…"
+                    className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+
+
+                    <div className="mt-1 text-xs text-gray-500">{countWords(newDesc)}/1000 words</div>
+                  </div>
                 )}
-                {todos.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-3">
-                    <label className="flex items-center gap-3 flex-1">
-                      <input
-                        type="checkbox"
-                        checked={t.done}
-                        onChange={() => toggleTodo(t.id)}
-                        className="h-4 w-4 rounded border-gray-300"
-                      />
-                      <span className={`text-sm ${t.done ? "line-through text-gray-400" : "text-gray-800"}`}>
-                        {t.text}
-                      </span>
-                    </label>
-                    <button
-                      onClick={() => removeTodo(t.id)}
-                      className="text-xs text-gray-500 hover:text-gray-800"
-                      aria-label="Remove todo"
-                      title="Remove"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              </div>
+              
+              {/* Numbered List */}
+<ol className="mt-3 space-y-3 list-decimal pl-6 marker:text-gray-500 marker:font-medium">
+  {todos.length === 0 && (
+    <li className="list-none pl-0 text-xs text-gray-500">No todos yet. Add a few small steps.</li>
+  )}
+
+  {todos.map((t) => (
+    <li key={t.id} className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition">
+      <div className="flex justify-between items-start gap-3">
+      <div 
+        className="flex items-start gap-3 flex-1 cursor-pointer"
+        onClick={() => toggleOpen(t.id)}
+      >
+        <input
+          type="checkbox"
+          checked={t.done}
+          onChange={() => toggleTodo(t.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="mt-1 h-4 w-4 rounded border-gray-300"
+        />
+        <span className={`text-sm leading-5 ${t.done ? "line-through text-gray-400" : "text-gray-900"}`}>
+          {t.text}
+        </span>
+      </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => toggleOpen(t.id)}
+            className="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1"
+            title={t.open ? "Hide notes" : "Show notes"}
+          >
+            {t.open ? "▾ Hide notes" : "▸ Show notes"}
+          </button>
+
+          <button
+            onClick={() => removeTodo(t.id)}
+            className="text-xs text-gray-500 hover:text-red-600"
+            title="Remove"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      
+      {/* Simple read-only notes with edit mode */}
+      <div className={`mt-2 ${t.open ? "block" : "hidden"}`} aria-hidden={!t.open}>
+        <div className="relative">
+          {t.editing ? (
+            // Edit mode - textarea
+            <div className="space-y-2">
+              <textarea
+                {...LTR_PROPS}
+                value={t.tempDescription || ""}
+                onChange={(e) => {
+                  const cleanValue = stripBidi(e.target.value);
+                  const words = cleanValue ? cleanValue.split(/\s+/).length : 0;
+                  if (words <= WORD_LIMIT) {
+                    setTodos(prev => prev.map(todo => 
+                      todo.id === t.id ? { ...todo, tempDescription: cleanValue } : todo
+                    ));
+                  }
+                }}
+                placeholder="Type your notes here..."
+                className="w-full h-32 rounded-md border border-gray-300 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                autoFocus
+              />
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-gray-500">
+                  {countWords(t.tempDescription || "")}/{WORD_LIMIT} words
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      updateDescription(t.id, t.tempDescription || "");
+                      setTodos(prev => prev.map(todo => 
+                        todo.id === t.id ? { ...todo, editing: false, tempDescription: undefined } : todo
+                      ));
+                    }}
+                    className="text-xs px-2 py-1 bg-gray-900 text-white rounded"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTodos(prev => prev.map(todo => 
+                        todo.id === t.id ? { ...todo, editing: false, tempDescription: undefined } : todo
+                      ));
+                    }}
+                    className="text-xs px-2 py-1 border border-gray-300 rounded"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            // Read-only mode
+            <div className="relative min-h-[80px] rounded-md border border-gray-200 bg-gray-50 p-3">
+              {t.description ? (
+                <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                  {stripHtml(t.description)}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-400 italic">
+                  No notes yet. Click edit to add some.
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  setTodos(prev => prev.map(todo => 
+                    todo.id === t.id ? { 
+                      ...todo, 
+                      editing: true, 
+                      tempDescription: stripHtml(todo.description || "")
+                    } : todo
+                  ));
+                }}
+                className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 p-1"
+                title="Edit notes"
+              >
+                ✏️
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </li>
+  ))}
+</ol>
+
+
+
 
               {/* Footer actions */}
               {todos.some((t) => t.done) && (
